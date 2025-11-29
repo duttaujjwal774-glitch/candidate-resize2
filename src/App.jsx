@@ -1,12 +1,10 @@
-import React, { useState, useCallback } from "react";
-import Cropper from "react-easy-crop";
+import { useRef, useState } from "react";
 
 export default function App() {
+  const fileInputRef = useRef(null);
   const [image, setImage] = useState(null);
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
 
-  const onImageUpload = (e) => {
+  const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
       setImage(URL.createObjectURL(file));
@@ -14,30 +12,33 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6 flex flex-col items-center">
-      <h1 className="text-2xl font-bold text-navy-700 mb-4">
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-start py-10">
+      <h1 className="text-3xl font-bold text-gray-800">
         Resize Photo & Signature for Govt Exams
       </h1>
+      <p className="text-gray-600 my-3">Upload Photo / Signature</p>
 
-      <label className="bg-navy-700 text-white px-4 py-2 rounded cursor-pointer mb-4">
-        Upload Photo / Signature
-        <input type="file" accept="image/*" className="hidden" onChange={onImageUpload} />
-      </label>
+      <button
+        onClick={() => fileInputRef.current.click()}
+        className="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700"
+      >
+        Upload Image
+      </button>
+
+      <input
+        type="file"
+        accept="image/*"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        className="hidden"
+      />
 
       {image && (
-        <div className="relative w-full max-w-md h-80 bg-black rounded overflow-hidden">
-          <Cropper
-            image={image}
-            crop={crop}
-            zoom={zoom}
-            onCropChange={setCrop}
-            onZoomChange={setZoom}
-            aspect={4 / 3}
-          />
+        <div className="mt-6">
+          <img src={image} alt="preview" className="max-w-full max-h-96 rounded shadow-md" />
         </div>
       )}
-
-      {!image && <p className="text-gray-600 mt-4">Upload an image to begin cropping.</p>}
     </div>
   );
 }
+
