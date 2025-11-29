@@ -1,3 +1,4 @@
+import React from "react";             // <- ADD THIS
 import { useRef, useState } from "react";
 
 export default function App() {
