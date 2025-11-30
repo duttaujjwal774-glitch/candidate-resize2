@@ -1,4 +1,4 @@
-import bg from "./bg.png";
+
 
 import React from "react";             // <- ADD THIS
 import { useRef, useState } from "react";
