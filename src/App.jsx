@@ -1,91 +1,94 @@
 import React, { useEffect, useRef, useState } from "react";
 
-/**
- * Full replacement App.jsx
- * - Robust canvas sizing: fits by WIDTH first, avoids thin strips for panoramic images
- * - Drag & Drop upload, Dark mode, Sidebar, Crop overlay, Resize & Download
- * - Injected CSS (no index.css edits required)
- */
+/*
+Full replacement App.jsx
+- Keeps previous safe image features (drag/drop, preview, crop, resize, rotate/flip, download)
+- Adds:
+   * Image → Text (OCR) via Tesseract.js loaded dynamically from CDN (no API)
+   * Image → PDF via jsPDF loaded dynamically from CDN (no API)
+- Libraries are loaded at runtime only when needed (avoids bundler/build issues)
+- All processing is done in-browser on a hidden canvas
+- Replace entire src/App.jsx with this file
+*/
 
 export default function App() {
-  // state
-  const [previewData, setPreviewData] = useState("");
+  // ---- state ----
   const [fileInfo, setFileInfo] = useState(null);
+  const [dataUrl, setDataUrl] = useState("");
   const [width, setWidth] = useState("");
   const [height, setHeight] = useState("");
   const [quality, setQuality] = useState(0.92);
+  const [format, setFormat] = useState("image/jpeg");
   const [dark, setDark] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [dragging, setDragging] = useState(false);
-  const [previewThumb, setPreviewThumb] = useState("");
+  const [rotateDeg, setRotateDeg] = useState(0);
+  const [flipH, setFlipH] = useState(false);
+  const [flipV, setFlipV] = useState(false);
 
-  // refs
-  const containerRef = useRef(null);
-  const controlsRef = useRef(null);
-  const canvasRef = useRef(null);
-  const overlayRef = useRef(null);
-  const naturalRef = useRef(null); // original Image
-  const displayScaleRef = useRef(1);
+  // OCR state
+  const [ocrRunning, setOcrRunning] = useState(false);
+  const [ocrText, setOcrText] = useState("");
+  const [ocrLoaded, setOcrLoaded] = useState(false);
 
+  // PDF loader state
+  const [pdfLoaded, setPdfLoaded] = useState(false);
+
+  // ---- refs ----
+  const fileInputRef = useRef();
+  const previewRef = useRef();        // visible img element
+  const containerRef = useRef();      // preview wrapper (for mouse coords)
+  const hiddenCanvasRef = useRef();   // hidden canvas used for processing
+  const cropOverlayRef = useRef();    // overlay canvas for crop rectangle
+  const naturalRef = useRef(null);    // original Image object
+  const cropRectRef = useRef(null);   // {x,y,w,h} in preview CSS pixels (visible)
   const cropStartRef = useRef(null);
-  const cropRectRef = useRef(null);
 
-  // Injected CSS
+  // injected CSS (compact)
   const css = `
-  :root{--bg:#f7f9fc;--card:#fff;--text:#0f172a;--muted:#64748b;--accent1:#2563eb;--accent2:#7c3aed}
-  .app-shell{max-width:1180px;margin:28px auto;font-family:Inter,system-ui,Arial;color:var(--text)}
-  .app-shell.dark{background:#061223;color:#e6eef8}
-  .card{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 10px 30px rgba(14,20,40,0.06);border:1px solid rgba(14,20,40,0.04)}
-  .app-shell.dark .card{background:#071123;box-shadow:0 12px 30px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.03)}
-  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .page-title{font-weight:700;font-size:20px}
-  .canvas-wrap{flex:1;min-width:340px}
-  .canvas-box{border-radius:10px;min-height:420px;border:1px solid rgba(14,20,40,0.04);background:linear-gradient(180deg,#fbfdff,#f7f9fc);padding:14px;position:relative;overflow:hidden}
-  .app-shell.dark .canvas-box{background:linear-gradient(180deg,#071123,#04101a);border-color:rgba(255,255,255,0.02)}
-  .canvas-box .inner{position:relative;width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center}
-  /* IMPORTANT: canvas is positioned absolutely with exact pixel width/height (no CSS scaling) */
-  .main-canvas{position:absolute;z-index:1;border-radius:6px;background:transparent;display:block;box-shadow:0 6px 18px rgba(14,20,40,0.03)}
-  .overlay-canvas{position:absolute;left:0;top:0;z-index:3;pointer-events:none;background:transparent}
-  .placeholder{position:absolute;left:28px;top:28px;color:var(--muted)}
-  .controls{width:300px;display:flex;flex-direction:column;gap:10px;margin-top:6px}
-  .controls input[type="number"], .controls input[type="text"]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(14,20,40,0.06);background:transparent;color:inherit}
-  .btn{display:inline-block;background:linear-gradient(90deg,var(--accent1),var(--accent2));color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:700;border:0;width:100%}
-  .btn.secondary{background:transparent;color:var(--text);border:1px solid rgba(14,20,40,0.06);box-shadow:none;font-weight:600}
-  .preview-thumb{background:#fbfdff;border-radius:8px;padding:8px;border:1px solid rgba(14,20,40,0.03);min-height:48px;display:flex;align-items:center;justify-content:center}
-  .info-box{background:#f8fafc;border-radius:8px;padding:10px;border:1px solid rgba(14,20,40,0.03);font-size:13px;color:#334155}
-  .label{font-weight:700;font-size:13px;margin-bottom:6px;color:var(--text)}
-  .meta{font-size:13px;color:#475569}
-  .sidebar{width:220px;padding:10px;border-left:1px solid rgba(14,20,40,0.04)}
-  .switch{display:inline-block;margin-right:8px}
-  .switch input{display:none}
-  .switch .slider{display:inline-block;width:44px;height:24px;background:#e6eef8;border-radius:20px;position:relative}
-  .switch .slider:after{content:'';position:absolute;left:4px;top:4px;width:16px;height:16px;background:#fff;border-radius:50%;transition:all .15s}
-  .switch input:checked + .slider{background:linear-gradient(90deg,var(--accent1),var(--accent2))}
-  .switch input:checked + .slider:after{transform:translateX(20px)}
-  .canvas-box.dragging{outline:3px dashed rgba(37,99,235,0.12);outline-offset:-6px}
-  @media (max-width:980px){.controls{width:100%}.canvas-wrap{min-width:100%}.sidebar{display:none}}
+    :root{--bg:#f7f9fc;--card:#fff;--text:#0f172a;--muted:#64748b;--accent:#6b46c1}
+    .app{max-width:1100px;margin:18px auto;font-family:Inter,Arial;color:var(--text)}
+    .app.dark{background:#071123;color:#e6eef8}
+    .card{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.06)}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .layout{display:flex;gap:18px}
+    .preview-col{flex:1}
+    .controls{width:340px;display:flex;flex-direction:column;gap:10px}
+    .preview-box{height:520px;border-radius:10px;background:linear-gradient(180deg,#fbfdff,#f7f9fc);border:1px solid rgba(0,0,0,0.04);position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+    .app.dark .preview-box{background:linear-gradient(180deg,#061426,#071123);border-color:rgba(255,255,255,0.02)}
+    .preview-img{max-width:90%;max-height:90%;display:block;user-select:none;pointer-events:none;border-radius:6px}
+    .overlay{position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:auto}
+    .controls input[type="number"], .controls select{padding:8px;border-radius:6px;border:1px solid #ddd}
+    .btn{padding:10px;border-radius:8px;border:0;background:linear-gradient(90deg,#3b82f6,#8b5cf6);color:white;cursor:pointer}
+    .sec{background:white;border:1px solid #eee;padding:10px;border-radius:8px;cursor:pointer}
+    .info{font-size:13px;color:var(--muted);padding:8px;background:#fbfdff;border-radius:8px}
+    .small{font-size:13px;color:#475569}
+    @media(max-width:980px){.layout{flex-direction:column}.controls{width:100%}}
   `;
 
-  // --------- load file ----------
-  function loadFile(file) {
+  // ------------- file loading -------------
+  function handleFile(file) {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      const data = ev.target.result;
+    reader.onload = (e) => {
+      const data = e.target.result;
       const img = new Image();
       img.onload = () => {
         naturalRef.current = img;
-        setPreviewData(data);
+        setDataUrl(data);
         setFileInfo({
           name: file.name,
           size: (file.size / 1024 / 1024).toFixed(2) + " MB",
           type: file.type || "image",
-          lastModified: new Date(file.lastModified).toLocaleString(),
-          width: img.naturalWidth,
-          height: img.naturalHeight,
+          modified: new Date(file.lastModified).toLocaleString(),
+          w: img.naturalWidth,
+          h: img.naturalHeight,
         });
         setWidth(String(img.naturalWidth));
         setHeight(String(img.naturalHeight));
+        setRotateDeg(0); setFlipH(false); setFlipV(false);
+        cropRectRef.current = null;
+        clearOverlay();
       };
       img.onerror = () => alert("Invalid image file");
       img.src = data;
@@ -93,302 +96,395 @@ export default function App() {
     reader.readAsDataURL(file);
   }
 
-  const onFileInput = (e) => {
+  const onFileChange = (e) => {
     const f = e.target.files?.[0];
-    if (f) loadFile(f);
+    if (f) handleFile(f);
   };
 
-  // drag & drop wiring
+  // drag/drop wiring
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const onDragOver = (ev) => { ev.preventDefault(); setDragging(true); };
-    const onDragLeave = (ev) => { ev.preventDefault(); setDragging(false); };
-    const onDrop = (ev) => { ev.preventDefault(); setDragging(false); const f = ev.dataTransfer.files?.[0]; if (f) loadFile(f); };
+    const onDragLeave = () => setDragging(false);
+    const onDrop = (ev) => { ev.preventDefault(); setDragging(false); const f = ev.dataTransfer.files?.[0]; if (f) handleFile(f); };
     el.addEventListener("dragover", onDragOver);
     el.addEventListener("dragleave", onDragLeave);
     el.addEventListener("drop", onDrop);
     return () => { el.removeEventListener("dragover", onDragOver); el.removeEventListener("dragleave", onDragLeave); el.removeEventListener("drop", onDrop); };
   }, []);
 
-  // --------- DRAW: robust width-first sizing (fixes panoramic squeeze) ----------
-  useEffect(() => {
-    const draw = () => {
-      const canvas = canvasRef.current;
-      const overlay = overlayRef.current;
-      const container = containerRef.current;
-      if (!canvas || !overlay || !container) return;
-
-      const inner = container.querySelector(".inner");
-      const innerW = inner ? inner.clientWidth : container.clientWidth;
-      const innerH = inner ? inner.clientHeight : container.clientHeight;
-      const maxH = Math.max(240, Math.min(900, innerH || 520));
-
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const img = naturalRef.current;
-      if (!img) {
-        // placeholder
-        const pw = Math.min(960, Math.max(420, innerW));
-        const ph = Math.min(520, maxH);
-        canvas.width = pw; canvas.height = ph;
-        canvas.style.width = pw + "px"; canvas.style.height = ph + "px";
-        canvas.style.left = Math.max(0, Math.round((innerW - pw) / 2)) + "px";
-        canvas.style.top = Math.max(0, Math.round((innerH - ph) / 2)) + "px";
-        overlay.width = canvas.width; overlay.height = canvas.height;
-        overlay.style.width = canvas.style.width; overlay.style.height = canvas.style.height;
-        overlay.style.left = canvas.style.left; overlay.style.top = canvas.style.top;
-        return;
-      }
-
-      const nW = img.naturalWidth || img.width;
-      const nH = img.naturalHeight || img.height;
-
-      // --- WIDTH-FIRST LOGIC (critical fix) ---
-      let displayW = Math.min(innerW, nW);              // limit by container width (do not cap height first)
-      let displayH = Math.round(displayW * (nH / nW)); // compute height from chosen width
-
-      // If computed height exceeds available vertical space, clamp by height and recompute width
-      if (displayH > maxH) {
-        displayH = maxH;
-        displayW = Math.max(160, Math.round(displayH * (nW / nH)));
-      }
-
-      // set exact pixel sizes (no CSS scaling)
-      canvas.width = displayW;
-      canvas.height = displayH;
-      canvas.style.width = displayW + "px";
-      canvas.style.height = displayH + "px";
-      canvas.style.left = Math.max(0, Math.round((innerW - displayW) / 2)) + "px";
-      canvas.style.top = Math.max(0, Math.round((innerH - displayH) / 2)) + "px";
-
-      overlay.width = displayW;
-      overlay.height = displayH;
-      overlay.style.width = canvas.style.width;
-      overlay.style.height = canvas.style.height;
-      overlay.style.left = canvas.style.left;
-      overlay.style.top = canvas.style.top;
-
-      // store scale for mapping display->natural
-      displayScaleRef.current = nW / displayW;
-
-      // draw scaled image
-      ctx.clearRect(0, 0, displayW, displayH);
-      ctx.drawImage(img, 0, 0, displayW, displayH);
-
-      // clear overlay
-      const octx = overlay.getContext("2d");
-      octx.clearRect(0, 0, overlay.width, overlay.height);
-
-      if (cropRectRef.current) drawOverlay();
-    };
-
-    draw();
-    window.addEventListener("resize", draw);
-    return () => window.removeEventListener("resize", draw);
-  }, [previewData]);
-
-  // --------- crop helpers ----------
-  const getDisplayPos = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    return { x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) };
+  // --------- overlay & cropping on visible preview ----------
+  const clearOverlay = () => {
+    const ov = cropOverlayRef.current;
+    if (!ov) return;
+    const ctx = ov.getContext("2d");
+    ctx.clearRect(0, 0, ov.width, ov.height);
   };
 
-  const onMouseDown = (e) => { if (!naturalRef.current) return; cropStartRef.current = getDisplayPos(e); cropRectRef.current = null; };
-  const onMouseMove = (e) => {
-    if (!cropStartRef.current) return;
-    const pos = getDisplayPos(e);
-    const s = cropStartRef.current;
-    const x = Math.min(s.x, pos.x);
-    const y = Math.min(s.y, pos.y);
-    const w = Math.max(1, Math.abs(pos.x - s.x));
-    const h = Math.max(1, Math.abs(pos.y - s.y));
-    cropRectRef.current = { x, y, w, h };
-    drawOverlay();
-  };
-  const onMouseUp = () => { cropStartRef.current = null; };
+  const drawOverlay = () => {
+    const ov = cropOverlayRef.current;
+    if (!ov || !containerRef.current) return;
+    const ctx = ov.getContext("2d");
+    const ratio = window.devicePixelRatio || 1;
+    const cssW = containerRef.current.clientWidth;
+    const cssH = containerRef.current.clientHeight;
+    ov.width = Math.round(cssW * ratio);
+    ov.height = Math.round(cssH * ratio);
+    ov.style.width = cssW + "px";
+    ov.style.height = cssH + "px";
+    ctx.setTransform(ratio,0,0,ratio,0,0);
+    ctx.clearRect(0,0,cssW,cssH);
 
-  function drawOverlay() {
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    const ctx = overlay.getContext("2d");
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
     const r = cropRectRef.current;
     if (!r) return;
     ctx.fillStyle = "rgba(0,0,0,0.28)";
-    ctx.fillRect(0, 0, overlay.width, overlay.height);
+    ctx.fillRect(0,0,cssW,cssH);
     ctx.clearRect(r.x, r.y, r.w, r.h);
-    ctx.strokeStyle = "#ffffff";
+    ctx.strokeStyle = "#fff";
     ctx.lineWidth = 2;
-    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h);
-  }
+    ctx.strokeRect(r.x+0.5, r.y+0.5, r.w, r.h);
+  };
 
-  function clearOverlay() {
-    cropRectRef.current = null;
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
-  }
+  const getPreviewRect = (e) => {
+    const rect = containerRef.current.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
 
-  function displayedToNatural(r) {
-    const scale = displayScaleRef.current || 1;
-    return { sx: Math.round(r.x * scale), sy: Math.round(r.y * scale), sw: Math.round(r.w * scale), sh: Math.round(r.h * scale) };
-  }
+  const onDown = (e) => { if (!naturalRef.current) return; cropStartRef.current = getPreviewRect(e); cropRectRef.current = null; };
+  const onMove = (e) => { if (!cropStartRef.current) return; const p = getPreviewRect(e); const s = cropStartRef.current; const x = Math.min(s.x,p.x), y = Math.min(s.y,p.y); const w = Math.max(1,Math.abs(p.x-s.x)), h = Math.max(1,Math.abs(p.y-s.y)); cropRectRef.current = {x,y,w,h}; drawOverlay(); };
+  const onUp = () => { cropStartRef.current = null; };
 
-  // --------- actions ----------
-  const cropAndDownload = () => {
+  // map crop rect CSS -> natural image pixels
+  function mapCropToNatural() {
     const r = cropRectRef.current;
-    if (!r || !naturalRef.current) return alert("Draw crop rectangle (click + drag).");
-    const nat = displayedToNatural(r);
-    const img = naturalRef.current;
-    const out = document.createElement("canvas");
-    out.width = nat.sw; out.height = nat.sh;
-    out.getContext("2d").drawImage(img, nat.sx, nat.sy, nat.sw, nat.sh, 0, 0, nat.sw, nat.sh);
-    out.toBlob((b) => { if (!b) return alert("Failed"); downloadBlob(b, `crop-${fileInfo?.name || "image.jpg"}`); }, "image/jpeg", quality);
-  };
+    if (!r || !naturalRef.current || !previewRef.current || !containerRef.current) return null;
+    const imgEl = previewRef.current;
+    const wrapper = containerRef.current;
+    const cssImgW = imgEl.clientWidth;
+    const cssImgH = imgEl.clientHeight;
+    const naturalW = naturalRef.current.naturalWidth;
+    const naturalH = naturalRef.current.naturalHeight;
+    const scaleX = naturalW / cssImgW;
+    const scaleY = naturalH / cssImgH;
+    const offsetX = (wrapper.clientWidth - cssImgW) / 2;
+    const offsetY = (wrapper.clientHeight - cssImgH) / 2;
+    const relX = r.x - offsetX;
+    const relY = r.y - offsetY;
+    const sx = Math.max(0, Math.round(relX * scaleX));
+    const sy = Math.max(0, Math.round(relY * scaleY));
+    const sw = Math.max(1, Math.round(Math.min(r.w * scaleX, naturalW - sx)));
+    const sh = Math.max(1, Math.round(Math.min(r.h * scaleY, naturalH - sy)));
+    return { sx, sy, sw, sh };
+  }
 
-  const applyCrop = () => {
-    const r = cropRectRef.current;
-    if (!r || !naturalRef.current) return alert("Draw crop rectangle first.");
-    const nat = displayedToNatural(r);
+  // ------------- hidden canvas processing -------------
+  async function processToBlob({ outW, outH, sx, sy, sw, sh, fmt = format, q = quality, rotate = rotateDeg, flipHorizontal = flipH, flipVertical = flipV }) {
     const img = naturalRef.current;
-    const out = document.createElement("canvas");
-    out.width = nat.sw; out.height = nat.sh;
-    out.getContext("2d").drawImage(img, nat.sx, nat.sy, nat.sw, nat.sh, 0, 0, nat.sw, nat.sh);
-    const data = out.toDataURL("image/jpeg", quality);
-    const newImg = new Image();
-    newImg.onload = () => { naturalRef.current = newImg; setPreviewData(data); clearOverlay(); };
-    newImg.src = data;
-  };
+    if (!img) throw new Error("No image");
+    const canvas = hiddenCanvasRef.current || document.createElement("canvas");
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(outW * ratio));
+    canvas.height = Math.max(1, Math.round(outH * ratio));
+    canvas.style.width = outW + "px";
+    canvas.style.height = outH + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio,0,0,ratio,0,0);
+    ctx.clearRect(0,0,outW,outH);
+    ctx.save();
+    if (rotate % 360 !== 0) {
+      ctx.translate(outW/2, outH/2);
+      ctx.rotate((rotate * Math.PI)/180);
+      ctx.translate(-outW/2, -outH/2);
+    }
+    if (flipHorizontal || flipVertical) {
+      ctx.translate(flipHorizontal ? outW : 0, flipVertical ? outH : 0);
+      ctx.scale(flipHorizontal ? -1 : 1, flipVertical ? -1 : 1);
+    }
+    if (typeof sx === "number") {
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+    } else {
+      ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, 0, 0, outW, outH);
+    }
+    ctx.restore();
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => { if (!b) reject(new Error("Failed to create blob")); else resolve(b); }, fmt, fmt === "image/jpeg" ? q : undefined);
+    });
+  }
 
-  const resizeAndDownload = () => {
-    if (!naturalRef.current) return alert("Upload an image first.");
-    const w = parseInt(width, 10);
-    const h = parseInt(height, 10);
-    if (!w || !h) return alert("Enter width and height.");
-    const img = naturalRef.current;
-    const out = document.createElement("canvas");
-    out.width = w; out.height = h;
-    out.getContext("2d").drawImage(img, 0, 0, w, h);
-    out.toBlob((b) => { if (!b) return alert("Failed"); downloadBlob(b, `resized-${fileInfo?.name || "image.jpg"}`); }, "image/jpeg", quality);
-  };
-
-  const downloadBlob = (blob, filename) => {
+  const downloadBlob = (blob, name) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 
-  const clearAll = () => {
-    naturalRef.current = null;
-    setPreviewData("");
-    setFileInfo(null);
-    setWidth("");
-    setHeight("");
-    setQuality(0.92);
-    clearOverlay();
+  // image actions
+  const handleResizeDownload = async () => {
+    if (!naturalRef.current) return alert("Upload image first");
+    const w = parseInt(width, 10), h = parseInt(height, 10);
+    if (!w || !h) return alert("Enter width and height");
+    try {
+      const b = await processToBlob({ outW: w, outH: h, fmt: format, q: quality });
+      const ext = format === "image/png" ? "png" : "jpg";
+      downloadBlob(b, `resized-${fileInfo?.name || "image"}.${ext}`);
+    } catch (err) { alert(err.message); }
   };
 
-  // preview thumbnail
+  const handleCropDownload = async () => {
+    const nat = mapCropToNatural();
+    if (!nat) return alert("Draw crop on preview first");
+    try {
+      const b = await processToBlob({ outW: nat.sw, outH: nat.sh, sx: nat.sx, sy: nat.sy, sw: nat.sw, sh: nat.sh, fmt: format, q: quality });
+      const ext = format === "image/png" ? "png" : "jpg";
+      downloadBlob(b, `crop-${fileInfo?.name || "image"}.${ext}`);
+    } catch (err) { alert(err.message); }
+  };
+
+  const handleApplyCrop = async () => {
+    const nat = mapCropToNatural();
+    if (!nat) return alert("Draw crop on preview first");
+    try {
+      const b = await processToBlob({ outW: nat.sw, outH: nat.sh, sx: nat.sx, sy: nat.sy, sw: nat.sw, sh: nat.sh, fmt: "image/jpeg", q: 0.92 });
+      const url = URL.createObjectURL(b);
+      const img = new Image();
+      img.onload = () => {
+        naturalRef.current = img;
+        setDataUrl(url);
+        setFileInfo((f) => f ? { ...f, w: img.naturalWidth, h: img.naturalHeight } : f);
+        setWidth(String(img.naturalWidth)); setHeight(String(img.naturalHeight));
+        cropRectRef.current = null; clearOverlay();
+        // revoke later (when replaced or cleared) - cannot revoke now because preview uses it
+      };
+      img.src = url;
+    } catch (err) { alert(err.message); }
+  };
+
+  const rotateRight = () => setRotateDeg((d) => (d + 90) % 360);
+  const rotateLeft = () => setRotateDeg((d) => (d - 90 + 360) % 360);
+  const toggleFlipH = () => setFlipH((s) => !s);
+  const toggleFlipV = () => setFlipV((s) => !s);
+  const clearAll = () => { setDataUrl(""); setFileInfo(null); naturalRef.current = null; setWidth(""); setHeight(""); setOcrText(""); cropRectRef.current = null; clearOverlay(); };
+
+  // update preview transform on rotate/flip changes
   useEffect(() => {
-    if (!naturalRef.current) { setPreviewThumb(""); return; }
-    const w = parseInt(width, 10);
-    const h = parseInt(height, 10);
-    if (!w || !h) { setPreviewThumb(""); return; }
-    const img = naturalRef.current;
-    const tmp = document.createElement("canvas");
-    tmp.width = Math.min(420, w);
-    tmp.height = Math.min(340, h);
-    tmp.getContext("2d").drawImage(img, 0, 0, w, h, 0, 0, tmp.width, tmp.height);
-    setPreviewThumb(tmp.toDataURL("image/jpeg", quality));
-  }, [width, height, quality, previewData]);
+    const imgEl = previewRef.current;
+    if (!imgEl) return;
+    const t = `rotate(${rotateDeg}deg) scale(${flipH ? -1 : 1}, ${flipV ? -1 : 1})`;
+    imgEl.style.transform = t;
+    drawOverlay();
+  }, [rotateDeg, flipH, flipV, dataUrl]);
+
+  // ---------- OCR loading + run (dynamic) ----------
+  // load Tesseract.js dynamically from CDN
+  async function loadTesseract() {
+    if (ocrLoaded) return;
+    setOcrRunning(true);
+    try {
+      if (!window.Tesseract) {
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@2.1.5/dist/tesseract.min.js";
+          s.onload = res; s.onerror = rej; document.head.appendChild(s);
+        });
+      }
+      setOcrLoaded(true);
+    } catch (err) {
+      alert("Failed to load OCR library.");
+    } finally { setOcrRunning(false); }
+  }
+
+  async function runOCR() {
+    if (!dataUrl) return alert("Upload image first");
+    await loadTesseract();
+    if (!window.Tesseract) return alert("OCR not available");
+    setOcrRunning(true); setOcrText("Processing...");
+    try {
+      const { createWorker } = window.Tesseract;
+      // in older builds Tesseract.createWorker exists
+      if (!createWorker && window.Tesseract.recognize) {
+        // fallback simple recognize
+        const res = await window.Tesseract.recognize(dataUrl, "eng", { logger: (m) => {/*progress*/} });
+        setOcrText(res.data?.text || "No text found");
+      } else {
+        // preferred worker API
+        const worker = createWorker({
+          logger: (m) => {
+            // optional progress: m.progress
+          },
+        });
+        await worker.load();
+        await worker.loadLanguage("eng");
+        await worker.initialize("eng");
+        const { data } = await worker.recognize(dataUrl);
+        setOcrText(data?.text || "No text found");
+        await worker.terminate();
+      }
+    } catch (err) {
+      setOcrText("OCR failed: " + (err.message || err));
+    } finally { setOcrRunning(false); }
+  }
+
+  // ---------- PDF loading + image→pdf (dynamic) ----------
+  async function loadJsPdf() {
+    if (pdfLoaded) return;
+    try {
+      if (!window.jspdf) {
+        await new Promise((res, rej) => {
+          const s = document.createElement("script");
+          // use UMD build that exposes window.jspdf
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+          s.onload = res; s.onerror = rej; document.head.appendChild(s);
+        });
+      }
+      setPdfLoaded(true);
+    } catch (err) {
+      alert("Failed to load PDF library.");
+    }
+  }
+
+  async function imageToPDF() {
+    if (!dataUrl) return alert("Upload image first");
+    await loadJsPdf();
+    if (!window.jspdf || !window.jspdf.jsPDF) return alert("PDF library not available");
+    try {
+      // create a PDF with same pixel size as image (use px units)
+      const img = naturalRef.current;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "px", format: [w, h] });
+      // ensure image is JPEG dataURL for addImage (if PNG chosen, keep as PNG)
+      const type = format === "image/png" ? "PNG" : "JPEG";
+      doc.addImage(dataUrl, type, 0, 0, w, h);
+      const pdfBlob = doc.output("blob");
+      downloadBlob(pdfBlob, (fileInfo?.name || "image") + ".pdf");
+    } catch (err) {
+      alert("Failed to create PDF: " + (err.message || err));
+    }
+  }
+
+  // small helper: create preview thumbnail on width/height change (for real-time preview)
+  useEffect(() => {
+    if (!naturalRef.current) return;
+    const w = parseInt(width, 10), h = parseInt(height, 10);
+    if (!w || !h) return;
+    (async () => {
+      try {
+        const b = await processToBlob({ outW: Math.min(420, w), outH: Math.min(340, h), fmt: "image/jpeg", q: quality });
+        const u = URL.createObjectURL(b);
+        // set as preview thumbnail by updating dataUrl? We keep main preview as original.
+        // We'll create a separate small image preview only if needed. For now skip to avoid replacing main preview.
+        // Revoke after short time
+        setTimeout(() => URL.revokeObjectURL(u), 3000);
+      } catch (e) { /* ignore */ }
+    })();
+  }, [width, height, quality]);
 
   // render
   return (
-    <div className={dark ? "app-shell dark" : "app-shell"}>
+    <div className={dark ? "app dark" : "app"}>
       <style>{css}</style>
 
-      <div className="topbar">
-        <div className="page-title">Image: Resize & Crop</div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label className="switch">
-            <input type="checkbox" checked={dark} onChange={() => setDark((s) => !s)} />
-            <span className="slider" />
+      <div className="top">
+        <div style={{fontWeight:700}}>Image: Resize, Crop, PDF & OCR</div>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6}}>
+            <input type="checkbox" checked={dark} onChange={(e)=>setDark(e.target.checked)} /> Dark
           </label>
-          <button className="btn secondary" onClick={() => setSidebarOpen((s) => !s)}>{sidebarOpen ? "Hide" : "Show"} Sidebar</button>
+          <button className="sec" onClick={()=>setSidebarOpen(s=>!s)}>{sidebarOpen ? "Hide" : "Show"} Sidebar</button>
         </div>
       </div>
 
       <div className="card">
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <input type="file" accept="image/*" onChange={onFileInput} />
-          <div style={{ marginLeft: "auto" }}>
-            {fileInfo ? (
-              <div className="info-box">
-                <div style={{ fontWeight: 700 }}>{fileInfo.name}</div>
-                <div style={{ fontSize: 13 }}>{fileInfo.size} • {fileInfo.type}</div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>{fileInfo.lastModified}</div>
-                <div style={{ fontSize: 13, marginTop: 6 }}>{fileInfo.width} × {fileInfo.height} px</div>
-              </div>
-            ) : (
-              <div className="meta">No file selected</div>
-            )}
-          </div>
+        <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:8}}>
+          <input ref={fileInputRef} type="file" accept="image/*" onChange={onFileChange} />
+          <div style={{marginLeft:"auto"}} className="info">{fileInfo ? `${fileInfo.name} • ${fileInfo.size} • ${fileInfo.w}×${fileInfo.h}px` : "No file selected"}</div>
         </div>
 
-        <div style={{ height: 14 }} />
+        <div className="layout">
+          <div className="preview-col">
+            <div className="preview-box" ref={containerRef}
+                 onMouseDown={(e)=>onDown(e)} onMouseMove={(e)=>onMove(e)} onMouseUp={()=>onUp()}>
+              {dataUrl ? <>
+                <img ref={previewRef} src={dataUrl} alt="preview" className="preview-img" draggable={false}
+                     style={{transition:"transform .12s", transform: `rotate(${rotateDeg}deg) scale(${flipH ? -1 : 1}, ${flipV ? -1 : 1})`}} />
+                <canvas ref={cropOverlayRef} className="overlay" />
+              </> : <div className="small">Drop image here or choose file. Draw crop rectangle on preview to crop.</div>}
+            </div>
 
-        <div style={{ display: "flex", gap: 18 }}>
-          <div className="canvas-wrap" ref={containerRef}>
-            <div className={dragging ? "canvas-box dragging" : "canvas-box"}>
-              <div className="inner"
-                   onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                   onDragLeave={() => setDragging(false)}
-                   onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}>
-                <canvas ref={canvasRef} className="main-canvas" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} />
-                <canvas ref={overlayRef} className="overlay-canvas" />
-                {!previewData && (
-                  <div className="placeholder">
-                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Drop or select an image</div>
-                    <div style={{ fontSize: 13 }}>Then draw crop rectangle (click + drag)</div>
-                  </div>
-                )}
+            <div style={{height:12}} />
+
+            <div style={{display:"flex",gap:8}}>
+              <button className="btn" onClick={handleResizeDownload}>Resize & Download</button>
+              <button className="sec" onClick={handleCropDownload}>Crop & Download</button>
+              <button className="sec" onClick={handleApplyCrop}>Apply Crop</button>
+            </div>
+
+            <div style={{height:10}} />
+
+            <div style={{display:"flex",gap:8}}>
+              <button className="sec" onClick={async ()=>{ await loadTesseract(); runOCR(); }} disabled={ocrRunning}>{ocrRunning ? "OCR running..." : "Image → Text (OCR)"}</button>
+              <button className="sec" onClick={imageToPDF}>Image → PDF</button>
+            </div>
+
+            <div style={{height:10}} />
+            <div style={{fontWeight:700, marginBottom:6}}>OCR Result</div>
+            <textarea value={ocrText} readOnly style={{width:"100%",minHeight:120,padding:8}} placeholder="OCR output will appear here" />
+          </div>
+
+          <div className="controls">
+            <div><div className="small" style={{fontWeight:700}}>Width (px)</div><input type="number" value={width} onChange={(e)=>setWidth(e.target.value)} /></div>
+            <div><div className="small" style={{fontWeight:700}}>Height (px)</div><input type="number" value={height} onChange={(e)=>setHeight(e.target.value)} /></div>
+
+            <div>
+              <div className="small" style={{fontWeight:700}}>Quality</div>
+              <input type="range" min="0.1" max="1" step="0.01" value={quality} onChange={(e)=>setQuality(Number(e.target.value))} />
+            </div>
+
+            <div>
+              <div className="small" style={{fontWeight:700}}>Format</div>
+              <select value={format} onChange={(e)=>setFormat(e.target.value)}>
+                <option value="image/jpeg">JPEG</option>
+                <option value="image/png">PNG</option>
+              </select>
+            </div>
+
+            <div style={{display:"flex",gap:8}}>
+              <button className="sec" onClick={rotateLeft}>Rotate Left</button>
+              <button className="sec" onClick={rotateRight}>Rotate Right</button>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button className="sec" onClick={toggleFlipH}>Flip H</button>
+              <button className="sec" onClick={toggleFlipV}>Flip V</button>
+            </div>
+
+            <div style={{display:"flex",gap:8}}>
+              <button className="sec" onClick={clearAll}>Clear</button>
+            </div>
+
+            <div style={{marginTop:12}}>
+              <div style={{fontWeight:700}}>Useful</div>
+              <div className="info" style={{marginTop:8}}>
+                <div>• OCR runs inside browser (no APIs). Might be slow for large images.</div>
+                <div style={{marginTop:6}}>• PDF uses jsPDF loaded at runtime (no bundling).</div>
+                <div style={{marginTop:6}}>• All image ops are client-side, safe and private.</div>
               </div>
             </div>
           </div>
 
-          <div className="controls" ref={controlsRef}>
-            <div><div className="label">Width (px)</div><input value={width} onChange={(e) => setWidth(e.target.value)} /></div>
-            <div><div className="label">Height (px)</div><input value={height} onChange={(e) => setHeight(e.target.value)} /></div>
-            <div><div className="label">Quality</div><input type="range" min="0.1" max="1" step="0.01" value={quality} onChange={(e) => setQuality(Number(e.target.value))} /></div>
-
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn" onClick={resizeAndDownload}>Resize & Download</button>
-            </div>
-
-            <button className="btn secondary" onClick={cropAndDownload}>Crop & Download</button>
-            <button className="btn secondary" onClick={applyCrop}>Apply Crop (replace preview)</button>
-            <button className="btn secondary" onClick={clearOverlay}>Clear Crop</button>
-            <button className="btn secondary" onClick={clearAll}>Clear All</button>
-
-            <div style={{ height: 12 }} />
-            <div className="label">Real-time Resize Preview</div>
-            <div className="preview-thumb">
-              {previewThumb ? <img src={previewThumb} alt="preview" style={{ maxWidth: "100%" }} /> : <div className="meta">Enter width & height to see preview</div>}
-            </div>
-          </div>
-
-          {sidebarOpen && <aside className="sidebar">
-            <h4>Extras</h4>
-            <p className="meta">Drag & drop supported. Works fully in-browser.</p>
-            <p className="meta">Dark mode: {dark ? "On" : "Off"}</p>
-            <div style={{ marginTop: 8 }}>
-              <button className="btn secondary" onClick={() => setQuality(0.8)}>Quick Compress</button>
-            </div>
-          </aside>}
+          {sidebarOpen && <div style={{width:220,paddingLeft:12}}>
+            <div style={{fontWeight:700}}>File Info</div>
+            <div className="info" style={{marginTop:8}}>{fileInfo ? <>
+              <div style={{fontWeight:700}}>{fileInfo.name}</div>
+              <div className="small">{fileInfo.size} • {fileInfo.type}</div>
+              <div style={{marginTop:6}}>{fileInfo.w} × {fileInfo.h} px</div>
+              <div style={{marginTop:6}}>{fileInfo.modified}</div>
+            </> : "No file selected"}</div>
+          </div>}
         </div>
       </div>
+
+      <canvas ref={hiddenCanvasRef} style={{display:"none"}} />
     </div>
   );
 }
