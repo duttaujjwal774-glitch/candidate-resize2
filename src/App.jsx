@@ -1,28 +1,27 @@
 import React, { useState, useRef } from "react";
 
 /**
- * Dynamic imports version WITHOUT file-saver.
- * - No top-level imports of heavy/browser-only libs.
- * - Uses downloadBlob() instead of file-saver.
- * - Dynamically imports jspdf, pdf-lib, tesseract when used.
+ * Lighter Plan-B App.jsx
+ * - No file-saver, no OCR
+ * - Dynamic imports for jspdf and pdf-lib
+ * - downloadBlob() helper for saving files
  *
- * Save as src/App.jsx and redeploy.
+ * Features (no external API required):
+ * - Image preview
+ * - Resize image and download
+ * - Add watermark to image and download
+ * - Image -> PDF (jspdf, dynamic)
+ * - Merge PDFs, Split PDF, Compress PDF, PDF->Images (pdf-lib, dynamic)
  */
 
 /* ---------- Lazy import helpers ---------- */
 const getJsPdf = async () => {
   const mod = await import("jspdf");
-  // some bundlers put constructor on mod.jsPDF, others as default
   return mod.jsPDF || mod.default || mod;
 };
 
 const getPdfLib = async () => {
   const mod = await import("pdf-lib");
-  return mod;
-};
-
-const getTesseract = async () => {
-  const mod = await import("tesseract.js");
   return mod;
 };
 
@@ -41,47 +40,54 @@ const downloadBlob = (blob, filename) => {
 /* ---------- Component ---------- */
 export default function App() {
   const [tab, setTab] = useState("image");
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState("");
+  const [file, setFile] = useState(null); // currently selected single file
+  const [preview, setPreview] = useState(""); // dataURL for image preview
   const [width, setWidth] = useState("");
   const [height, setHeight] = useState("");
   const [keepRatio, setKeepRatio] = useState(true);
   const [quality, setQuality] = useState(0.9);
-  const [ocrText, setOcrText] = useState("");
   const [watermarkText, setWatermarkText] = useState("");
+  const inputRef = useRef(); // used for selecting multiple files for merging
 
-  const inputRef = useRef();
-
-  /** Load File (single) */
-  const loadFile = async (e) => {
+  /** Load first selected file (single-file operations) */
+  const loadFile = (e) => {
     const f = e.target.files && e.target.files[0];
     if (!f) {
       setFile(null);
       setPreview("");
+      setWidth("");
+      setHeight("");
       return;
     }
     setFile(f);
 
+    // If image, create preview and set natural sizes
     if (f.type && f.type.startsWith("image/")) {
       const reader = new FileReader();
-      reader.onload = (ev) => setPreview(ev.target.result);
-      reader.readAsDataURL(f);
-
-      const img = new Image();
-      img.src = URL.createObjectURL(f);
-      img.onload = () => {
-        setWidth(img.width);
-        setHeight(img.height);
+      reader.onload = (ev) => {
+        setPreview(ev.target.result);
+        // measure actual size
+        const img = new Image();
+        img.onload = () => {
+          setWidth(img.width);
+          setHeight(img.height);
+        };
+        img.src = ev.target.result;
       };
+      reader.readAsDataURL(f);
     } else {
+      // Not an image: clear preview
       setPreview("");
+      setWidth("");
+      setHeight("");
     }
   };
 
-  /** Resize Image */
+  /* ---------- IMAGE OPERATIONS ---------- */
+
   const resizeImage = async () => {
     if (!file) return alert("Upload image first!");
-    if (!file.type.startsWith("image/")) return alert("Not an image!");
+    if (!file.type || !file.type.startsWith("image/")) return alert("Not an image!");
 
     const img = new Image();
     img.src = preview;
@@ -109,13 +115,45 @@ export default function App() {
     const ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0, w, h);
 
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return alert("Failed to generate image");
+        downloadBlob(blob, `resized-${file.name}`);
+      },
+      "image/jpeg",
+      quality
+    );
+  };
+
+  const addWatermark = async () => {
+    if (!preview) return alert("Upload image first!");
+
+    const img = new Image();
+    img.src = preview;
+    await img.decode();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+
+    ctx.drawImage(img, 0, 0);
+
+    ctx.save();
+    ctx.font = `${Math.max(20, img.width / 15)}px sans-serif`;
+    ctx.fillStyle = "rgba(255,0,0,0.35)";
+    ctx.textAlign = "center";
+    ctx.translate(img.width / 2, img.height / 2);
+    ctx.rotate(-0.25);
+    ctx.fillText(watermarkText || "Watermark", 0, 0);
+    ctx.restore();
+
     canvas.toBlob((blob) => {
-      if (!blob) return alert("Failed to generate image blob");
-      downloadBlob(blob, "resized-" + file.name);
+      if (!blob) return alert("Failed to generate watermarked image");
+      downloadBlob(blob, `watermarked-${file ? file.name : "image.jpg"}`);
     }, "image/jpeg", quality);
   };
 
-  /** Image → PDF */
   const imageToPDF = async () => {
     if (!file || !preview) return alert("Upload image first");
 
@@ -125,6 +163,7 @@ export default function App() {
 
     const jsPDF = await getJsPdf();
 
+    // create PDF the same size as image (px)
     const pdf = new jsPDF({
       unit: "px",
       format: [img.width, img.height],
@@ -133,13 +172,14 @@ export default function App() {
     pdf.addImage(preview, "JPEG", 0, 0, img.width, img.height);
 
     const blob = pdf.output("blob");
-    downloadBlob(blob, file.name.replace(/\..+$/, "") + ".pdf");
+    downloadBlob(blob, `${file.name.replace(/\..+$/, "")}.pdf`);
   };
 
-  /** Merge PDFs (multiple select) */
+  /* ---------- PDF OPERATIONS (require dynamic pdf-lib) ---------- */
+
   const mergePDFs = async () => {
     const files = inputRef.current && inputRef.current.files;
-    if (!files || files.length === 0) return alert("Select PDFs (multiple)");
+    if (!files || files.length === 0) return alert("Select PDFs (multiple) to merge");
 
     const { PDFDocument } = await getPdfLib();
     const outPDF = await PDFDocument.create();
@@ -148,17 +188,16 @@ export default function App() {
       if (!f.type || !f.type.includes("pdf")) continue;
       const bytes = await f.arrayBuffer();
       const pdf = await PDFDocument.load(bytes);
-      const pages = await outPDF.copyPages(pdf, pdf.getPageIndices());
-      pages.forEach((p) => outPDF.addPage(p));
+      const copied = await outPDF.copyPages(pdf, pdf.getPageIndices());
+      copied.forEach((p) => outPDF.addPage(p));
     }
 
     const merged = await outPDF.save();
     downloadBlob(new Blob([merged]), "merged.pdf");
   };
 
-  /** Split PDF into separate pages */
   const splitPDF = async () => {
-    if (!file || !file.type.includes("pdf")) return alert("Upload PDF");
+    if (!file || !file.type.includes("pdf")) return alert("Upload a PDF to split");
 
     const { PDFDocument } = await getPdfLib();
     const bytes = await file.arrayBuffer();
@@ -169,15 +208,35 @@ export default function App() {
       const out = await PDFDocument.create();
       const [page] = await out.copyPages(pdf, [i]);
       out.addPage(page);
-      const saveBytes = await out.save();
-      downloadBlob(new Blob([saveBytes]), `page-${i + 1}.pdf`);
+      const res = await out.save();
+      downloadBlob(new Blob([res]), `page-${i + 1}.pdf`);
     }
   };
 
-  /** PDF → Images (simple placeholder render per page) */
-  const pdfToImages = async () => {
-    if (!file || !file.type.includes("pdf")) return alert("Upload PDF first!");
+  const compressPDF = async () => {
+    if (!file || !file.type.includes("pdf")) return alert("Upload a PDF to compress");
 
+    const { PDFDocument } = await getPdfLib();
+    const bytes = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(bytes);
+
+    // Strip metadata and ask pdf-lib to use object streams
+    pdf.setTitle("");
+    pdf.setSubject("");
+    pdf.setKeywords([]);
+    pdf.setProducer("");
+    pdf.setCreator("");
+    pdf.setAuthor("");
+
+    const res = await pdf.save({ useObjectStreams: true });
+    downloadBlob(new Blob([res]), `compressed-${file.name.replace(/\..+$/, "")}.pdf`);
+  };
+
+  const pdfToImages = async () => {
+    if (!file || !file.type.includes("pdf")) return alert("Upload a PDF first");
+
+    // This is a lightweight placeholder renderer — not a full PDF rasterizer.
+    // It produces simple PNG placeholders for each page to preview / download.
     const { PDFDocument } = await getPdfLib();
     const bytes = await file.arrayBuffer();
     const pdf = await PDFDocument.load(bytes);
@@ -194,69 +253,91 @@ export default function App() {
 
       ctx.fillStyle = "#000";
       ctx.font = "20px sans-serif";
-      ctx.fillText(`PDF Preview Page ${i + 1}`, 100, 100);
+      ctx.fillText(`PDF Preview Page ${i + 1}`, 40, 80);
 
       canvas.toBlob((b) => downloadBlob(b, `pdf-page-${i + 1}.png`));
     }
   };
 
-  /** Compress PDF (basic) */
-  const compressPDF = async () => {
-    if (!file || !file.type.includes("pdf")) return alert("Upload PDF first!");
-    const { PDFDocument } = await getPdfLib();
-    const bytes = await file.arrayBuffer();
-    const pdf = await PDFDocument.load(bytes);
+  /* ---------- UI ---------- */
+  return (
+    <div className="p-6 max-w-3xl mx-auto">
+      <h1 className="text-3xl font-bold text-center mb-4">All-in-One File Toolkit (lighter)</h1>
 
-    pdf.setTitle("");
-    pdf.setSubject("");
-    pdf.setKeywords([]);
-    pdf.setProducer("");
-    pdf.setCreator("");
-    pdf.setAuthor("");
+      {/* Tabs */}
+      <div className="flex gap-3 justify-center mb-4">
+        {["image", "pdf", "watermark"].map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-2 rounded ${tab === t ? "bg-blue-500 text-white" : "bg-gray-200"}`}
+          >
+            {t.toUpperCase()}
+          </button>
+        ))}
+      </div>
 
-    const saveBytes = await pdf.save({ useObjectStreams: true });
-    downloadBlob(new Blob([saveBytes]), "compressed.pdf");
-  };
+      {/* File input (multiple allowed for merge) */}
+      <input
+        type="file"
+        onChange={loadFile}
+        ref={inputRef}
+        className="mb-4"
+        multiple
+        accept="image/*,application/pdf"
+      />
 
-  /** OCR (Image → Text) */
-  const doOCR = async () => {
-    if (!file || !preview) return alert("Upload an image");
+      {/* Image preview (show only for image files) */}
+      {preview && tab !== "pdf" && (
+        <img src={preview} alt="preview" className="w-full mb-4 rounded" />
+      )}
 
-    setOcrText("Processing... Please wait");
+      {/* IMAGE TAB */}
+      {tab === "image" && (
+        <>
+          <h2 className="text-xl font-bold mb-2">Image Tools</h2>
 
-    const Tesseract = await getTesseract();
-    const { createWorker } = Tesseract;
+          <div className="flex gap-3 mb-3">
+            <input value={width} onChange={(e) => setWidth(e.target.value)} placeholder="Width" className="border p-2 w-full" />
+            <input value={height} onChange={(e) => setHeight(e.target.value)} placeholder="Height" className="border p-2 w-full" />
+          </div>
 
-    const worker = createWorker({
-      logger: (m) => {
-        // optionally use console.log(m) or update progress
-      },
-    });
+          <label className="block mb-3">
+            <input type="checkbox" checked={keepRatio} onChange={(e) => setKeepRatio(e.target.checked)} />{" "}
+            Keep Aspect Ratio
+          </label>
 
-    try {
-      await worker.load();
-      await worker.loadLanguage("eng");
-      await worker.initialize("eng");
-      const { data } = await worker.recognize(preview);
-      setOcrText(data.text || "No text detected");
-    } catch (err) {
-      setOcrText("OCR failed: " + (err.message || err));
-    } finally {
-      await worker.terminate();
-    }
-  };
+          <div className="flex gap-3">
+            <button onClick={resizeImage} className="bg-green-600 text-white px-4 py-2 rounded">Resize & Download</button>
+            <button onClick={imageToPDF} className="bg-blue-600 text-white px-4 py-2 rounded">Image → PDF</button>
+          </div>
+        </>
+      )}
 
-  /** Add Watermark to Image */
-  const addWatermark = async () => {
-    if (!preview) return alert("Upload image first!");
+      {/* PDF TAB */}
+      {tab === "pdf" && (
+        <>
+          <h2 className="text-xl font-bold mb-2">PDF Tools</h2>
 
-    const img = new Image();
-    img.src = preview;
-    await img.decode();
+          <div className="flex flex-col gap-3">
+            <button onClick={mergePDFs} className="bg-purple-600 text-white px-4 py-2 rounded">Merge PDFs (select multiple files above)</button>
+            <button onClick={splitPDF} className="bg-orange-600 text-white px-4 py-2 rounded">Split PDF (single PDF must be loaded)</button>
+            <button onClick={compressPDF} className="bg-teal-600 text-white px-4 py-2 rounded">Compress PDF</button>
+            <button onClick={pdfToImages} className="bg-red-600 text-white px-4 py-2 rounded">PDF → Images (preview placeholders)</button>
+          </div>
+        </>
+      )}
 
-    const canvas = document.createElement("canvas");
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext("2d");
+      {/* WATERMARK TAB */}
+      {tab === "watermark" && (
+        <>
+          <h2 className="text-xl font-bold mb-2">Add Watermark</h2>
 
-    ctx.dr
+          <input type="text" placeholder="Watermark text" value={watermarkText} onChange={(e) => setWatermarkText(e.target.value)} className="border p-2 w-full mb-3" />
+
+          <button onClick={addWatermark} className="bg-red-600 text-white px-4 py-2 rounded">Apply Watermark & Download</button>
+        </>
+      )}
+    </div>
+  );
+}
