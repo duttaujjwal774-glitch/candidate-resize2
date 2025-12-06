@@ -1,15 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 
 /**
- * Single-file: App.jsx (drop-in replacement)
- * - Includes CSS injected via <style> so no index.css edits required
- * - Drag & drop, dark mode, sidebar, real-time preview
- * - Fixed canvas + overlay sizing to avoid padding/offset issues
- * - No external libraries
+ * Full App.jsx — REPLACE ENTIRE src/App.jsx WITH THIS
+ * Fix: robust canvas sizing using the inner wrapper width so images never render tiny.
+ * Includes: drag/drop, dark mode, sidebar, crop, resize, real-time preview.
  */
 
 export default function App() {
-  // UI state
   const [previewData, setPreviewData] = useState("");
   const [fileInfo, setFileInfo] = useState(null);
   const [width, setWidth] = useState("");
@@ -20,21 +17,18 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [previewThumb, setPreviewThumb] = useState("");
 
-  // refs and internal state
   const containerRef = useRef(null);
-  const canvasRef = useRef(null); // displayed canvas
-  const overlayRef = useRef(null);
   const controlsRef = useRef(null);
-  const naturalRef = useRef(null); // original Image object
-  const displayScaleRef = useRef(1); // natural_px / display_px
+  const canvasRef = useRef(null);
+  const overlayRef = useRef(null);
+  const naturalRef = useRef(null); // real original image
+  const displayScaleRef = useRef(1);
 
   const cropStartRef = useRef(null);
   const cropRectRef = useRef(null);
 
-  // -------------------------
-  // CSS injected here so user doesn't need to edit index.css
-  // -------------------------
-  const injectedCss = `
+  // Injected CSS so user doesn't have to change index.css
+  const css = `
   :root{--bg:#f7f9fc;--card:#fff;--text:#0f172a;--muted:#64748b;--accent1:#2563eb;--accent2:#7c3aed}
   .app-shell{max-width:1180px;margin:28px auto;font-family:Inter,system-ui,Arial;color:var(--text)}
   .app-shell.dark{background:#061223;color:#e6eef8}
@@ -45,8 +39,8 @@ export default function App() {
   .canvas-wrap{flex:1;min-width:340px}
   .canvas-box{border-radius:10px;min-height:420px;border:1px solid rgba(14,20,40,0.04);background:linear-gradient(180deg,#fbfdff,#f7f9fc);padding:14px;position:relative;overflow:hidden}
   .app-shell.dark .canvas-box{background:linear-gradient(180deg,#071123,#04101a);border-color:rgba(255,255,255,0.02)}
-  .canvas-box .inner{position:relative;width:100%;height:100%;box-sizing:border-box}
-  .main-canvas{position:absolute;left:0;top:0;z-index:1;border-radius:6px;display:block;background:transparent}
+  .canvas-box .inner{position:relative;width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center}
+  .main-canvas{display:block;max-width:100%;height:auto;border-radius:6px;background:transparent;z-index:1}
   .overlay-canvas{position:absolute;left:0;top:0;z-index:3;pointer-events:none;background:transparent}
   .placeholder{position:absolute;left:28px;top:28px;color:var(--muted)}
   .controls{width:300px;display:flex;flex-direction:column;gap:10px;margin-top:6px}
@@ -68,11 +62,9 @@ export default function App() {
   @media (max-width:980px){.controls{width:100%}.canvas-wrap{min-width:100%}.sidebar{display:none}}
   `;
 
-  // -------------------------
-  // File / drop handlers
-  // -------------------------
-  const loadFileFromFile = (file) => {
-    if (!file) return;
+  // ---------- helper: load file ----------
+  function loadFile(f) {
+    if (!f) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
       const data = ev.target.result;
@@ -81,95 +73,103 @@ export default function App() {
         naturalRef.current = img;
         setPreviewData(data);
         setFileInfo({
-          name: file.name,
-          size: (file.size / 1024 / 1024).toFixed(2) + " MB",
-          type: file.type || "image",
-          lastModified: new Date(file.lastModified).toLocaleString(),
+          name: f.name,
+          size: (f.size / 1024 / 1024).toFixed(2) + " MB",
+          type: f.type || "image",
+          lastModified: new Date(f.lastModified).toLocaleString(),
           width: img.naturalWidth,
           height: img.naturalHeight,
         });
         setWidth(String(img.naturalWidth));
         setHeight(String(img.naturalHeight));
       };
-      img.onerror = () => alert("Invalid image file");
+      img.onerror = () => alert("Invalid image");
       img.src = data;
     };
-    reader.readAsDataURL(file);
-  };
+    reader.readAsDataURL(f);
+  }
 
-  const onFileInput = (e) => {
+  const onFileChange = (e) => {
     const f = e.target.files?.[0];
-    if (f) loadFileFromFile(f);
+    if (f) loadFile(f);
   };
 
-  // drag & drop wiring on container
+  // ---------- drag/drop ----------
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const onDragOver = (ev) => { ev.preventDefault(); setDragging(true); };
     const onDragLeave = (ev) => { ev.preventDefault(); setDragging(false); };
-    const onDrop = (ev) => { ev.preventDefault(); setDragging(false); const f=ev.dataTransfer.files?.[0]; if(f) loadFileFromFile(f); };
+    const onDrop = (ev) => { ev.preventDefault(); setDragging(false); const f = ev.dataTransfer.files?.[0]; if (f) loadFile(f); };
     el.addEventListener("dragover", onDragOver);
     el.addEventListener("dragleave", onDragLeave);
     el.addEventListener("drop", onDrop);
     return () => { el.removeEventListener("dragover", onDragOver); el.removeEventListener("dragleave", onDragLeave); el.removeEventListener("drop", onDrop); };
   }, []);
 
-  // -------------------------
-  // Draw scaled image into canvas and keep overlay in sync
-  // -------------------------
+  // ---------- draw logic (ROBUST) ----------
   useEffect(() => {
     const draw = () => {
       const canvas = canvasRef.current;
       const overlay = overlayRef.current;
       const container = containerRef.current;
-      const controls = controlsRef.current;
       if (!canvas || !overlay || !container) return;
 
-      // calculate available width inside container minus controls (if visible)
-      const containerPadding = 28;
-      const containerW = Math.max(360, container.clientWidth - containerPadding);
-      // subtract controls width if on big screen and controls exist
-      const controlsWidth = controls ? Math.min(340, controls.clientWidth) : 320;
-      const availW = Math.max(300, containerW - (window.innerWidth > 980 ? controlsWidth + 32 : 0));
-      const maxH = Math.max(260, Math.min(820, container.clientHeight || 520));
+      // Use the inner wrapper width for reliable sizing:
+      const inner = container.querySelector(".inner");
+      const innerW = inner ? inner.clientWidth : container.clientWidth;
+      const maxH = Math.max(240, Math.min(820, container.clientHeight || 520));
 
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const img = naturalRef.current;
       if (!img) {
-        // placeholder
-        const pw = Math.min(900, availW);
+        const pw = Math.min(960, Math.max(360, innerW));
         const ph = Math.min(520, maxH);
         canvas.width = pw;
         canvas.height = ph;
         canvas.style.width = pw + "px";
         canvas.style.height = ph + "px";
-        overlay.width = canvas.width;
-        overlay.height = canvas.height;
-        overlay.style.width = canvas.style.width;
-        overlay.style.height = canvas.style.height;
+        overlay.width = canvas.width; overlay.height = canvas.height;
+        overlay.style.width = canvas.style.width; overlay.style.height = canvas.style.height;
         return;
       }
 
       const nW = img.naturalWidth || img.width;
       const nH = img.naturalHeight || img.height;
-      const ratio = Math.min(1, Math.min(availW / nW, maxH / nH));
-      const displayW = Math.max(160, Math.round(nW * ratio));
-      const displayH = Math.max(120, Math.round(nH * ratio));
 
+      // Display width uses inner wrapper width (so canvas fills available area)
+      const displayW = Math.max(160, Math.min(innerW, Math.round(innerW)));
+      // compute height from aspect ratio but don't exceed maxH
+      let displayH = Math.max(120, Math.round(displayW * (nH / nW)));
+      if (displayH > maxH) {
+        displayH = maxH;
+        // recompute width from constrained height to retain aspect ratio
+        const newW = Math.max(160, Math.round(displayH * (nW / nH)));
+        // but never exceed innerW
+        if (newW < displayW) {
+          // use narrower width if needed
+          canvas.width = newW;
+          canvas.style.width = newW + "px";
+        }
+      }
+
+      // set canvas sizes exactly to pixel values (no CSS scaling)
       canvas.width = displayW;
       canvas.height = displayH;
       canvas.style.width = displayW + "px";
       canvas.style.height = displayH + "px";
+
       overlay.width = displayW;
       overlay.height = displayH;
       overlay.style.width = canvas.style.width;
       overlay.style.height = canvas.style.height;
 
+      // store scale factor for mapping display->natural
       displayScaleRef.current = nW / displayW;
 
+      // draw
       ctx.clearRect(0, 0, displayW, displayH);
       ctx.drawImage(img, 0, 0, displayW, displayH);
 
@@ -185,9 +185,7 @@ export default function App() {
     return () => window.removeEventListener("resize", draw);
   }, [previewData]);
 
-  // -------------------------
-  // Mouse helpers for crop
-  // -------------------------
+  // ---------- crop mouse handlers ----------
   const getDisplayPos = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     return { x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) };
@@ -222,30 +220,21 @@ export default function App() {
     ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h);
   }
 
-  function clearOverlay() {
-    cropRectRef.current = null;
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    const ctx = overlay.getContext("2d");
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-  }
+  function clearOverlay() { cropRectRef.current = null; const overlay = overlayRef.current; if (!overlay) return; overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height); }
 
   function displayedToNatural(r) {
     const scale = displayScaleRef.current || 1;
     return { sx: Math.round(r.x * scale), sy: Math.round(r.y * scale), sw: Math.round(r.w * scale), sh: Math.round(r.h * scale) };
   }
 
-  // -------------------------
-  // Actions
-  // -------------------------
+  // ---------- actions ----------
   const cropAndDownload = () => {
     const r = cropRectRef.current;
     if (!r || !naturalRef.current) return alert("Draw crop rectangle (click + drag).");
     const nat = displayedToNatural(r);
     const img = naturalRef.current;
     const out = document.createElement("canvas");
-    out.width = nat.sw;
-    out.height = nat.sh;
+    out.width = nat.sw; out.height = nat.sh;
     const ctx = out.getContext("2d");
     ctx.drawImage(img, nat.sx, nat.sy, nat.sw, nat.sh, 0, 0, nat.sw, nat.sh);
     out.toBlob((b) => { if (!b) return alert("Failed"); downloadBlob(b, `crop-${fileInfo?.name || "image.jpg"}`); }, "image/jpeg", quality);
@@ -257,8 +246,7 @@ export default function App() {
     const nat = displayedToNatural(r);
     const img = naturalRef.current;
     const out = document.createElement("canvas");
-    out.width = nat.sw;
-    out.height = nat.sh;
+    out.width = nat.sw; out.height = nat.sh;
     const ctx = out.getContext("2d");
     ctx.drawImage(img, nat.sx, nat.sy, nat.sw, nat.sh, 0, 0, nat.sw, nat.sh);
     const data = out.toDataURL("image/jpeg", quality);
@@ -273,32 +261,17 @@ export default function App() {
     const h = parseInt(height, 10);
     if (!w || !h) return alert("Enter width and height.");
     const img = naturalRef.current;
-    const out = document.createElement("canvas");
-    out.width = w; out.height = h;
+    const out = document.createElement("canvas"); out.width = w; out.height = h;
     const ctx = out.getContext("2d");
     ctx.drawImage(img, 0, 0, w, h);
     out.toBlob((b) => { if (!b) return alert("Failed"); downloadBlob(b, `resized-${fileInfo?.name || "image.jpg"}`); }, "image/jpeg", quality);
   };
 
-  const downloadBlob = (blob, filename) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-  };
+  const downloadBlob = (blob, name) => { const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); };
 
-  const clearAll = () => {
-    naturalRef.current = null;
-    setPreviewData("");
-    setFileInfo(null);
-    setWidth("");
-    setHeight("");
-    setQuality(0.92);
-    clearOverlay();
-  };
+  const clearAll = () => { naturalRef.current = null; setPreviewData(""); setFileInfo(null); setWidth(""); setHeight(""); setQuality(0.92); clearOverlay(); };
 
-  // -------------------------
-  // Real-time thumbnail preview for resize
-  // -------------------------
+  // ---------- preview thumb ----------
   useEffect(() => {
     if (!naturalRef.current) { setPreviewThumb(""); return; }
     const w = parseInt(width, 10);
@@ -308,95 +281,79 @@ export default function App() {
     const tmp = document.createElement("canvas");
     tmp.width = Math.min(420, w);
     tmp.height = Math.min(340, h);
-    const ctx = tmp.getContext("2d");
-    ctx.drawImage(img, 0, 0, w, h, 0, 0, tmp.width, tmp.height);
+    tmp.getContext("2d").drawImage(img, 0, 0, w, h, 0, 0, tmp.width, tmp.height);
     setPreviewThumb(tmp.toDataURL("image/jpeg", quality));
   }, [width, height, quality, previewData]);
 
-  // -------------------------
-  // UI
-  // -------------------------
+  // ---------- render ----------
   return (
     <div className={dark ? "app-shell dark" : "app-shell"}>
-      <style>{injectedCss}</style>
+      <style>{css}</style>
 
       <div className="topbar">
         <div className="page-title">Image: Resize & Crop</div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <label className="switch">
-            <input type="checkbox" checked={dark} onChange={() => setDark((s) => !s)} />
+            <input type="checkbox" checked={dark} onChange={() => setDark(s=>!s)} />
             <span className="slider" />
           </label>
-          <button style={{ padding: "6px 10px" }} className="btn secondary" onClick={() => setSidebarOpen((s) => !s)}>{sidebarOpen ? "Hide" : "Show"} Sidebar</button>
+          <button className="btn secondary" onClick={() => setSidebarOpen(s=>!s)}>{sidebarOpen ? "Hide" : "Show"} Sidebar</button>
         </div>
       </div>
 
       <div className="card">
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <input type="file" accept="image/*" onChange={onFileInput} />
-          <div style={{ marginLeft: "auto" }}>
+        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+          <input type="file" accept="image/*" onChange={onFileChange} />
+          <div style={{marginLeft:"auto"}}>
             {fileInfo ? (
               <div className="info-box">
-                <div style={{ fontWeight: 700 }}>{fileInfo.name}</div>
-                <div style={{ fontSize: 13 }}>{fileInfo.size} • {fileInfo.type}</div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 6 }}>{fileInfo.lastModified}</div>
-                <div style={{ fontSize: 13, marginTop: 6 }}>{fileInfo.width} × {fileInfo.height} px</div>
+                <div style={{fontWeight:700}}>{fileInfo.name}</div>
+                <div style={{fontSize:13}}>{fileInfo.size} • {fileInfo.type}</div>
+                <div style={{fontSize:12,color:"#64748b",marginTop:6}}>{fileInfo.lastModified}</div>
+                <div style={{fontSize:13,marginTop:6}}>{fileInfo.width} × {fileInfo.height} px</div>
               </div>
-            ) : (
-              <div className="meta">No file selected</div>
-            )}
+            ) : <div className="meta">No file selected</div>}
           </div>
         </div>
 
-        <div style={{ height: 14 }} />
+        <div style={{height:14}} />
 
-        <div style={{ display: "flex", gap: 18 }}>
-          {/* canvas area */}
+        <div style={{display:"flex",gap:18}}>
           <div className="canvas-wrap" ref={containerRef}>
             <div className={dragging ? "canvas-box dragging" : "canvas-box"}>
               <div className="inner"
-                onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) loadFileFromFile(f); }}
+                onDragOver={(e)=>{e.preventDefault(); setDragging(true)}}
+                onDragLeave={()=>setDragging(false)}
+                onDrop={(e)=>{e.preventDefault(); setDragging(false); const f=e.dataTransfer.files?.[0]; if(f) loadFile(f)}}
               >
                 <canvas ref={canvasRef} className="main-canvas" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} />
                 <canvas ref={overlayRef} className="overlay-canvas" />
-                {!previewData && (<div className="placeholder"><div style={{ fontWeight: 700, marginBottom: 6 }}>Drop or select an image</div><div style={{ fontSize: 13 }}>Then draw crop rectangle (click + drag)</div></div>)}
+                {!previewData && (<div className="placeholder"><div style={{fontWeight:700,marginBottom:6}}>Drop or select an image</div><div style={{fontSize:13}}>Then draw crop rectangle (click + drag)</div></div>)}
               </div>
             </div>
           </div>
 
-          {/* controls */}
           <div className="controls" ref={controlsRef}>
-            <div><div className="label">Width (px)</div><input value={width} onChange={(e) => setWidth(e.target.value)} /></div>
-            <div><div className="label">Height (px)</div><input value={height} onChange={(e) => setHeight(e.target.value)} /></div>
-            <div><div className="label">Quality</div><input type="range" min="0.1" max="1" step="0.01" value={quality} onChange={(e) => setQuality(Number(e.target.value))} /></div>
+            <div><div className="label">Width (px)</div><input value={width} onChange={(e)=>setWidth(e.target.value)} /></div>
+            <div><div className="label">Height (px)</div><input value={height} onChange={(e)=>setHeight(e.target.value)} /></div>
+            <div><div className="label">Quality</div><input type="range" min="0.1" max="1" step="0.01" value={quality} onChange={(e)=>setQuality(Number(e.target.value))} /></div>
 
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn" onClick={resizeAndDownload}>Resize & Download</button>
-            </div>
-
+            <div style={{display:"flex",gap:10}}><button className="btn" onClick={resizeAndDownload}>Resize & Download</button></div>
             <button className="btn secondary" onClick={cropAndDownload}>Crop & Download</button>
             <button className="btn secondary" onClick={applyCrop}>Apply Crop (replace preview)</button>
             <button className="btn secondary" onClick={clearOverlay}>Clear Crop</button>
             <button className="btn secondary" onClick={clearAll}>Clear All</button>
 
-            <div style={{ height: 12 }} />
-
+            <div style={{height:12}} />
             <div className="label">Real-time Resize Preview</div>
-            <div className="preview-thumb">
-              {previewThumb ? <img src={previewThumb} alt="preview" style={{ maxWidth: "100%" }} /> : <div className="meta">Enter width & height to see preview</div>}
-            </div>
+            <div className="preview-thumb">{previewThumb ? <img src={previewThumb} alt="preview" style={{maxWidth:"100%"}} /> : <div className="meta">Enter width & height to see preview</div>}</div>
           </div>
 
-          {/* sidebar */}
           {sidebarOpen && <aside className="sidebar">
             <h4>Extras</h4>
             <p className="meta">Drag & drop supported. Works fully in-browser.</p>
             <p className="meta">Dark mode: {dark ? "On" : "Off"}</p>
-            <div style={{ marginTop: 8 }}>
-              <button className="btn secondary" onClick={() => setQuality(0.8)}>Quick Compress</button>
-            </div>
+            <div style={{marginTop:8}}><button className="btn secondary" onClick={()=>setQuality(0.8)}>Quick Compress</button></div>
           </aside>}
         </div>
       </div>
