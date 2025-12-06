@@ -2,10 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+/* REMOVE dark background, make plain white */
 body {
-    background-image: url('/bg.png');
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
+  background: #ffffff !important;
 }
+
+/* Make all text WHITE so it's always readable (optional) */
+body, html {
+  color: #000000 !important; /* BLACK TEXT (most readable) */
+}
+
+/* If you REALLY want white text instead of black, use this line: */
+/* color: #ffffff !important; */
