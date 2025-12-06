@@ -251,4 +251,50 @@
   .card { padding: 12px; }
   .canvas-box { min-height: 300px; }
 }
+/* ----- Fix: ensure canvases align inside padded canvas-box ----- */
+/* Make inner wrapper the positioned container and place canvases absolutely inside it */
+.canvas-box > div {
+  position: relative;     /* make inner wrapper the positioning context */
+  padding: 14px;          /* keep the nice padding you had */
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+}
+
+/* Main displayed canvas sits exactly at top-left of inner wrapper */
+.canvas-box .main-canvas {
+  position: absolute !important;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  background: transparent; /* important: do not hide image with background */
+  display: block;
+}
+
+/* Overlay canvas sits on top and is transparent by default */
+.canvas-box .overlay-canvas {
+  position: absolute !important;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: transparent;
+}
+
+/* Make placeholder text appear *under* overlay / above background */
+.canvas-box .placeholder {
+  position: absolute;
+  left: 28px;
+  top: 28px;
+  z-index: 0;        /* behind canvases */
+  color: #64748b;
+}
+
+/* Ensure canvases will not have an unintended white background */
+.canvas-box canvas {
+  background: transparent !important;
+}
+
+/* Small adjustment for dragging outline so it doesn't cover content */
+.canvas-box.dragging { outline-offset: -8px; }
 
