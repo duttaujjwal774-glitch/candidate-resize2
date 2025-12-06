@@ -1,3 +1,6 @@
+
+const [fileInfo, setFileInfo] = useState(null);
+
 import React, { useState, useRef, useEffect } from "react";
 
 /**
