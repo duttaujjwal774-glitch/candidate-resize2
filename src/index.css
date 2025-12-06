@@ -161,4 +161,24 @@
   align-items: center;
   justify-content: flex-end;
 }
+/* small additional fixes for overlay and alignment */
+.canvas-box { padding: 14px; box-sizing: border-box; }
+.canvas-box canvas { display: block; margin: 0 auto; }
+
+/* ensure overlay canvas sits above base canvas but inside container */
+.canvas-box canvas + canvas {
+  position: absolute !important;
+  left: 14px;
+  top: 14px;
+  pointer-events: none;
+}
+
+/* make sure container size doesn't collapse */
+.canvas-wrap { min-width: 360px; }
+
+/* shift controls slightly to align with canvas top */
+.controls { margin-top: 12px; }
+
+/* when overlay covers visually, reduce its default fill opacity if needed */
+.canvas-box canvas + canvas { opacity: 1; }
 
