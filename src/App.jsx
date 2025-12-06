@@ -1,22 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 
 /**
- * Replace entire src/App.jsx with this file.
- * Fixes:
- *  - prevents CSS scaling of canvas (no height:auto / max-width)
- *  - centers the canvas in the inner wrapper by setting left/top
- * Includes:
- *  - drag & drop upload
- *  - dark mode toggle
- *  - sidebar
- *  - crop overlay (non-blocking)
- *  - resize & download, crop & download, apply crop
- *  - real-time resize preview
- *
- * IMPORTANT: Replace whole file. Commit & redeploy. Hard refresh the page.
+ * Full replacement App.jsx
+ * - Robust canvas sizing: fits by WIDTH first, avoids thin strips for panoramic images
+ * - Drag & Drop upload, Dark mode, Sidebar, Crop overlay, Resize & Download
+ * - Injected CSS (no index.css edits required)
  */
 
 export default function App() {
+  // state
   const [previewData, setPreviewData] = useState("");
   const [fileInfo, setFileInfo] = useState(null);
   const [width, setWidth] = useState("");
@@ -27,17 +19,18 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [previewThumb, setPreviewThumb] = useState("");
 
+  // refs
   const containerRef = useRef(null);
   const controlsRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
-  const naturalRef = useRef(null);
+  const naturalRef = useRef(null); // original Image
   const displayScaleRef = useRef(1);
 
   const cropStartRef = useRef(null);
   const cropRectRef = useRef(null);
 
-  // injected CSS (explicitly prevents canvas CSS-scaling and centers)
+  // Injected CSS
   const css = `
   :root{--bg:#f7f9fc;--card:#fff;--text:#0f172a;--muted:#64748b;--accent1:#2563eb;--accent2:#7c3aed}
   .app-shell{max-width:1180px;margin:28px auto;font-family:Inter,system-ui,Arial;color:var(--text)}
@@ -50,8 +43,7 @@ export default function App() {
   .canvas-box{border-radius:10px;min-height:420px;border:1px solid rgba(14,20,40,0.04);background:linear-gradient(180deg,#fbfdff,#f7f9fc);padding:14px;position:relative;overflow:hidden}
   .app-shell.dark .canvas-box{background:linear-gradient(180deg,#071123,#04101a);border-color:rgba(255,255,255,0.02)}
   .canvas-box .inner{position:relative;width:100%;height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center}
-  /* IMPORTANT: canvas must NOT be CSS-scaled (no max-width/height:auto). 
-     We'll set exact pixel width/height and position it with left/top. */
+  /* IMPORTANT: canvas is positioned absolutely with exact pixel width/height (no CSS scaling) */
   .main-canvas{position:absolute;z-index:1;border-radius:6px;background:transparent;display:block;box-shadow:0 6px 18px rgba(14,20,40,0.03)}
   .overlay-canvas{position:absolute;left:0;top:0;z-index:3;pointer-events:none;background:transparent}
   .placeholder{position:absolute;left:28px;top:28px;color:var(--muted)}
@@ -74,21 +66,21 @@ export default function App() {
   @media (max-width:980px){.controls{width:100%}.canvas-wrap{min-width:100%}.sidebar{display:none}}
   `;
 
-  // load file helper
-  function loadFile(f) {
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = (ev) => {
+  // --------- load file ----------
+  function loadFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
       const data = ev.target.result;
       const img = new Image();
       img.onload = () => {
         naturalRef.current = img;
         setPreviewData(data);
         setFileInfo({
-          name: f.name,
-          size: (f.size / 1024 / 1024).toFixed(2) + " MB",
-          type: f.type || "image",
-          lastModified: new Date(f.lastModified).toLocaleString(),
+          name: file.name,
+          size: (file.size / 1024 / 1024).toFixed(2) + " MB",
+          type: file.type || "image",
+          lastModified: new Date(file.lastModified).toLocaleString(),
           width: img.naturalWidth,
           height: img.naturalHeight,
         });
@@ -98,7 +90,7 @@ export default function App() {
       img.onerror = () => alert("Invalid image file");
       img.src = data;
     };
-    r.readAsDataURL(f);
+    reader.readAsDataURL(file);
   }
 
   const onFileInput = (e) => {
@@ -119,7 +111,7 @@ export default function App() {
     return () => { el.removeEventListener("dragover", onDragOver); el.removeEventListener("dragleave", onDragLeave); el.removeEventListener("drop", onDrop); };
   }, []);
 
-  // robust draw + centering: this is the critical fix
+  // --------- DRAW: robust width-first sizing (fixes panoramic squeeze) ----------
   useEffect(() => {
     const draw = () => {
       const canvas = canvasRef.current;
@@ -127,27 +119,23 @@ export default function App() {
       const container = containerRef.current;
       if (!canvas || !overlay || !container) return;
 
-      // measure inner wrapper exactly
       const inner = container.querySelector(".inner");
       const innerW = inner ? inner.clientWidth : container.clientWidth;
       const innerH = inner ? inner.clientHeight : container.clientHeight;
-      const maxH = Math.max(240, Math.min(820, innerH || 520));
+      const maxH = Math.max(240, Math.min(900, innerH || 520));
 
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const img = naturalRef.current;
       if (!img) {
-        // placeholder size
-        const pw = Math.min(960, Math.max(360, innerW));
+        // placeholder
+        const pw = Math.min(960, Math.max(420, innerW));
         const ph = Math.min(520, maxH);
         canvas.width = pw; canvas.height = ph;
         canvas.style.width = pw + "px"; canvas.style.height = ph + "px";
-        // center
-        const left = Math.max(0, Math.round((innerW - pw) / 2));
-        const top = Math.max(0, Math.round((innerH - ph) / 2));
-        canvas.style.left = left + "px";
-        canvas.style.top = top + "px";
+        canvas.style.left = Math.max(0, Math.round((innerW - pw) / 2)) + "px";
+        canvas.style.top = Math.max(0, Math.round((innerH - ph) / 2)) + "px";
         overlay.width = canvas.width; overlay.height = canvas.height;
         overlay.style.width = canvas.style.width; overlay.style.height = canvas.style.height;
         overlay.style.left = canvas.style.left; overlay.style.top = canvas.style.top;
@@ -157,28 +145,24 @@ export default function App() {
       const nW = img.naturalWidth || img.width;
       const nH = img.naturalHeight || img.height;
 
-      // display width: use inner width (fill available area), but limit to image natural width
-      let displayW = Math.max(160, Math.min(innerW, nW));
-      // compute display height from aspect ratio but cap to maxH
-      let displayH = Math.max(120, Math.round(displayW * (nH / nW)));
+      // --- WIDTH-FIRST LOGIC (critical fix) ---
+      let displayW = Math.min(innerW, nW);              // limit by container width (do not cap height first)
+      let displayH = Math.round(displayW * (nH / nW)); // compute height from chosen width
+
+      // If computed height exceeds available vertical space, clamp by height and recompute width
       if (displayH > maxH) {
         displayH = maxH;
         displayW = Math.max(160, Math.round(displayH * (nW / nH)));
       }
 
-      // set canvas pixel dimensions exactly (no CSS scaling)
+      // set exact pixel sizes (no CSS scaling)
       canvas.width = displayW;
       canvas.height = displayH;
       canvas.style.width = displayW + "px";
       canvas.style.height = displayH + "px";
+      canvas.style.left = Math.max(0, Math.round((innerW - displayW) / 2)) + "px";
+      canvas.style.top = Math.max(0, Math.round((innerH - displayH) / 2)) + "px";
 
-      // center horizontally and vertically in inner
-      const left = Math.max(0, Math.round((innerW - displayW) / 2));
-      const top = Math.max(0, Math.round((innerH - displayH) / 2));
-      canvas.style.left = left + "px";
-      canvas.style.top = top + "px";
-
-      // overlay matches canvas and is positioned same offset
       overlay.width = displayW;
       overlay.height = displayH;
       overlay.style.width = canvas.style.width;
@@ -186,10 +170,10 @@ export default function App() {
       overlay.style.left = canvas.style.left;
       overlay.style.top = canvas.style.top;
 
-      // scale factor for mapping display -> natural
+      // store scale for mapping display->natural
       displayScaleRef.current = nW / displayW;
 
-      // draw the scaled image into canvas
+      // draw scaled image
       ctx.clearRect(0, 0, displayW, displayH);
       ctx.drawImage(img, 0, 0, displayW, displayH);
 
@@ -205,23 +189,21 @@ export default function App() {
     return () => window.removeEventListener("resize", draw);
   }, [previewData]);
 
-  // crop helpers
+  // --------- crop helpers ----------
   const getDisplayPos = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     return { x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) };
   };
 
-  const onMouseDown = (e) => {
-    if (!naturalRef.current) return;
-    cropStartRef.current = getDisplayPos(e);
-    cropRectRef.current = null;
-  };
+  const onMouseDown = (e) => { if (!naturalRef.current) return; cropStartRef.current = getDisplayPos(e); cropRectRef.current = null; };
   const onMouseMove = (e) => {
     if (!cropStartRef.current) return;
     const pos = getDisplayPos(e);
     const s = cropStartRef.current;
-    const x = Math.min(s.x, pos.x), y = Math.min(s.y, pos.y);
-    const w = Math.max(1, Math.abs(pos.x - s.x)), h = Math.max(1, Math.abs(pos.y - s.y));
+    const x = Math.min(s.x, pos.x);
+    const y = Math.min(s.y, pos.y);
+    const w = Math.max(1, Math.abs(pos.x - s.x));
+    const h = Math.max(1, Math.abs(pos.y - s.y));
     cropRectRef.current = { x, y, w, h };
     drawOverlay();
   };
@@ -254,7 +236,7 @@ export default function App() {
     return { sx: Math.round(r.x * scale), sy: Math.round(r.y * scale), sw: Math.round(r.w * scale), sh: Math.round(r.h * scale) };
   }
 
-  // actions
+  // --------- actions ----------
   const cropAndDownload = () => {
     const r = cropRectRef.current;
     if (!r || !naturalRef.current) return alert("Draw crop rectangle (click + drag).");
@@ -282,7 +264,8 @@ export default function App() {
 
   const resizeAndDownload = () => {
     if (!naturalRef.current) return alert("Upload an image first.");
-    const w = parseInt(width, 10), h = parseInt(height, 10);
+    const w = parseInt(width, 10);
+    const h = parseInt(height, 10);
     if (!w || !h) return alert("Enter width and height.");
     const img = naturalRef.current;
     const out = document.createElement("canvas");
@@ -298,21 +281,30 @@ export default function App() {
   };
 
   const clearAll = () => {
-    naturalRef.current = null; setPreviewData(""); setFileInfo(null); setWidth(""); setHeight(""); setQuality(0.92); clearOverlay();
+    naturalRef.current = null;
+    setPreviewData("");
+    setFileInfo(null);
+    setWidth("");
+    setHeight("");
+    setQuality(0.92);
+    clearOverlay();
   };
 
-  // preview thumb
+  // preview thumbnail
   useEffect(() => {
     if (!naturalRef.current) { setPreviewThumb(""); return; }
-    const w = parseInt(width, 10), h = parseInt(height, 10);
+    const w = parseInt(width, 10);
+    const h = parseInt(height, 10);
     if (!w || !h) { setPreviewThumb(""); return; }
     const img = naturalRef.current;
     const tmp = document.createElement("canvas");
-    tmp.width = Math.min(420, w); tmp.height = Math.min(340, h);
+    tmp.width = Math.min(420, w);
+    tmp.height = Math.min(340, h);
     tmp.getContext("2d").drawImage(img, 0, 0, w, h, 0, 0, tmp.width, tmp.height);
     setPreviewThumb(tmp.toDataURL("image/jpeg", quality));
   }, [width, height, quality, previewData]);
 
+  // render
   return (
     <div className={dark ? "app-shell dark" : "app-shell"}>
       <style>{css}</style>
@@ -351,10 +343,9 @@ export default function App() {
           <div className="canvas-wrap" ref={containerRef}>
             <div className={dragging ? "canvas-box dragging" : "canvas-box"}>
               <div className="inner"
-                onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
-              >
+                   onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+                   onDragLeave={() => setDragging(false)}
+                   onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}>
                 <canvas ref={canvasRef} className="main-canvas" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} />
                 <canvas ref={overlayRef} className="overlay-canvas" />
                 {!previewData && (
@@ -368,20 +359,9 @@ export default function App() {
           </div>
 
           <div className="controls" ref={controlsRef}>
-            <div>
-              <div className="label">Width (px)</div>
-              <input value={width} onChange={(e) => setWidth(e.target.value)} />
-            </div>
-
-            <div>
-              <div className="label">Height (px)</div>
-              <input value={height} onChange={(e) => setHeight(e.target.value)} />
-            </div>
-
-            <div>
-              <div className="label">Quality</div>
-              <input type="range" min="0.1" max="1" step="0.01" value={quality} onChange={(e) => setQuality(Number(e.target.value))} />
-            </div>
+            <div><div className="label">Width (px)</div><input value={width} onChange={(e) => setWidth(e.target.value)} /></div>
+            <div><div className="label">Height (px)</div><input value={height} onChange={(e) => setHeight(e.target.value)} /></div>
+            <div><div className="label">Quality</div><input type="range" min="0.1" max="1" step="0.01" value={quality} onChange={(e) => setQuality(Number(e.target.value))} /></div>
 
             <div style={{ display: "flex", gap: 10 }}>
               <button className="btn" onClick={resizeAndDownload}>Resize & Download</button>
@@ -393,27 +373,20 @@ export default function App() {
             <button className="btn secondary" onClick={clearAll}>Clear All</button>
 
             <div style={{ height: 12 }} />
-
             <div className="label">Real-time Resize Preview</div>
             <div className="preview-thumb">
-              {previewThumb ? (
-                <img src={previewThumb} alt="preview" style={{ maxWidth: "100%" }} />
-              ) : (
-                <div className="meta">Enter width & height to see preview</div>
-              )}
+              {previewThumb ? <img src={previewThumb} alt="preview" style={{ maxWidth: "100%" }} /> : <div className="meta">Enter width & height to see preview</div>}
             </div>
           </div>
 
-          {sidebarOpen && (
-            <aside className="sidebar">
-              <h4>Extras</h4>
-              <p className="meta">Drag & drop supported. Works fully in-browser.</p>
-              <p className="meta">Dark mode: {dark ? "On" : "Off"}</p>
-              <div style={{ marginTop: 8 }}>
-                <button className="btn secondary" onClick={() => setQuality(0.8)}>Quick Compress</button>
-              </div>
-            </aside>
-          )}
+          {sidebarOpen && <aside className="sidebar">
+            <h4>Extras</h4>
+            <p className="meta">Drag & drop supported. Works fully in-browser.</p>
+            <p className="meta">Dark mode: {dark ? "On" : "Off"}</p>
+            <div style={{ marginTop: 8 }}>
+              <button className="btn secondary" onClick={() => setQuality(0.8)}>Quick Compress</button>
+            </div>
+          </aside>}
         </div>
       </div>
     </div>
