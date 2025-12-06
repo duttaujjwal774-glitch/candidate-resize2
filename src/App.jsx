@@ -1,31 +1,24 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 export default function App() {
-  const [file, setFile] = useState(null);
-  const [fileInfo, setFileInfo] = useState(null);
   const [preview, setPreview] = useState("");
-  const [fileName, setFileName] = useState("image.jpg");
-
+  const [fileInfo, setFileInfo] = useState(null);
   const [width, setWidth] = useState("");
   const [height, setHeight] = useState("");
-  const [keepAspect, setKeepAspect] = useState(false);
   const [quality, setQuality] = useState(0.92);
 
-  const canvasRef = useRef(null); // main image canvas
-  const cropCanvasRef = useRef(null); // crop overlay canvas
+  const canvasRef = useRef(null);
+  const cropCanvasRef = useRef(null);
 
   const cropStart = useRef(null);
   const cropRect = useRef(null);
 
-  // --------------------------
-  // LOAD FILE + SHOW INFO
-  // --------------------------
+  // -------------------------
+  // LOAD FILE
+  // -------------------------
   const loadFile = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-
-    setFile(f);
-    setFileName(f.name);
 
     const info = {
       name: f.name,
@@ -45,35 +38,31 @@ export default function App() {
       };
       img.src = ev.target.result;
     };
-
     reader.readAsDataURL(f);
   };
 
-  // --------------------------
-  // DRAW IMAGE ON CANVAS
-  // --------------------------
+  // -------------------------
+  // DRAW IMAGE
+  // -------------------------
   const drawImage = () => {
     if (!preview) return;
-
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    const img = new Image();
 
+    const img = new Image();
     img.onload = () => {
       canvas.width = img.width;
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0);
     };
-
     img.src = preview;
   };
 
-  React.useEffect(drawImage, [preview]);
+  useEffect(drawImage, [preview]);
 
-  // --------------------------
-  // CROP FEATURE
-  // --------------------------
-
+  // -------------------------
+  // MOUSE HELPERS
+  // -------------------------
   const getOffset = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
     return {
@@ -82,10 +71,12 @@ export default function App() {
     };
   };
 
+  // -------------------------
+  // CROP FUNCTIONS
+  // -------------------------
   const startCrop = (e) => {
     if (!preview) return;
     cropStart.current = getOffset(e);
-    cropRect.current = null;
   };
 
   const moveCrop = (e) => {
@@ -107,8 +98,8 @@ export default function App() {
     const overlay = cropCanvasRef.current;
     const ctx = overlay.getContext("2d");
     const rect = cropRect.current;
-
     const base = canvasRef.current;
+
     overlay.width = base.width;
     overlay.height = base.height;
 
@@ -124,8 +115,8 @@ export default function App() {
   const applyCrop = () => {
     if (!cropRect.current) return;
 
+    const base = canvasRef.current;
     const rect = cropRect.current;
-    const baseCanvas = canvasRef.current;
 
     const cropCanvas = document.createElement("canvas");
     const ctx = cropCanvas.getContext("2d");
@@ -134,7 +125,7 @@ export default function App() {
     cropCanvas.height = rect.h;
 
     ctx.drawImage(
-      baseCanvas,
+      base,
       rect.x,
       rect.y,
       rect.w,
@@ -145,22 +136,18 @@ export default function App() {
       rect.h
     );
 
-    const data = cropCanvas.toDataURL("image/jpeg", quality);
-    setPreview(data);
-
+    setPreview(cropCanvas.toDataURL("image/jpeg", quality));
     cropRect.current = null;
-    cropStart.current = null;
   };
 
   const clearCrop = () => {
     cropRect.current = null;
-    cropStart.current = null;
     drawCropOverlay();
   };
 
-  // --------------------------
-  // RESIZE IMAGE
-  // --------------------------
+  // -------------------------
+  // RESIZE
+  // -------------------------
   const resizeImage = () => {
     if (!preview || !width || !height) return alert("Enter width & height");
 
@@ -173,117 +160,86 @@ export default function App() {
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      const out = canvas.toDataURL("image/jpeg", quality);
-      downloadImage(out);
+      download(canvas.toDataURL("image/jpeg", quality));
     };
     img.src = preview;
   };
 
-  // --------------------------
-  // DOWNLOAD HELPER
-  // --------------------------
-  const downloadImage = (data) => {
+  const download = (data) => {
     const a = document.createElement("a");
     a.href = data;
-    a.download = fileName.replace(/\.[^.]+$/, "") + "_edited.jpg";
+    a.download = "output.jpg";
     a.click();
   };
 
   const clearAll = () => {
     setPreview("");
-    setFile(null);
     setFileInfo(null);
     cropRect.current = null;
-    cropStart.current = null;
   };
 
-  // --------------------------
-  // UI
-  // --------------------------
+  // -------------------------
+  // UI LAYOUT
+  // -------------------------
   return (
-    <div style={{ padding: 20, fontFamily: "sans-serif" }}>
-      <h2 style={{ textAlign: "center", marginBottom: 20 }}>Image: Resize & Crop</h2>
+    <div style={{ padding: 20, fontFamily: "Arial" }}>
+      <h2 style={{ textAlign: "center" }}>Image: Resize & Crop</h2>
 
       <input type="file" onChange={loadFile} />
 
       {fileInfo && (
-        <div style={{ marginTop: 10, fontSize: 14 }}>
-          <strong>File Details:</strong><br />
-          Name: {fileInfo.name} <br />
-          Size: {fileInfo.size} <br />
-          Type: {fileInfo.type} <br />
-          Modified: {fileInfo.lastModified} <br />
+        <div style={{ marginTop: 10 }}>
+          <b>File Info:</b><br />
+          Name: {fileInfo.name}<br />
+          Size: {fileInfo.size}<br />
+          Type: {fileInfo.type}<br />
+          Modified: {fileInfo.lastModified}<br />
           Dimensions: {fileInfo.width} × {fileInfo.height}px
         </div>
       )}
 
-      <div style={{ display: "flex", marginTop: 20, gap: 20 }}>
-        {/* Main Image Area */}
-        <div>
+      <div style={{ display: "flex", gap: 20, marginTop: 20 }}>
+        {/* Image + Crop Overlay */}
+        <div style={{ position: "relative" }}>
           <canvas
             ref={canvasRef}
-            style={{ border: "1px solid #ccc", cursor: "crosshair" }}
             onMouseDown={startCrop}
             onMouseMove={moveCrop}
-          ></canvas>
-
+            style={{ border: "1px solid #ccc" }}
+          />
           <canvas
             ref={cropCanvasRef}
             style={{
               position: "absolute",
+              top: 0,
+              left: 0,
               pointerEvents: "none",
-              border: "1px solid transparent",
             }}
-          ></canvas>
+          />
         </div>
 
         {/* Controls */}
         <div>
-          <div>
-            Width (px) <br />
-            <input
-              type="number"
-              value={width}
-              onChange={(e) => setWidth(e.target.value)}
-            />
-          </div>
+          Width (px)<br />
+          <input value={width} onChange={(e) => setWidth(e.target.value)} /><br />
 
-          <div style={{ marginTop: 10 }}>
-            Height (px) <br />
-            <input
-              type="number"
-              value={height}
-              onChange={(e) => setHeight(e.target.value)}
-            />
-          </div>
+          Height (px)<br />
+          <input value={height} onChange={(e) => setHeight(e.target.value)} /><br />
 
-          <div style={{ marginTop: 10 }}>
-            Quality <br />
-            <input
-              type="range"
-              min="0.1"
-              max="1"
-              step="0.01"
-              value={quality}
-              onChange={(e) => setQuality(parseFloat(e.target.value))}
-            />
-          </div>
+          Quality<br />
+          <input
+            type="range"
+            min="0.1"
+            max="1"
+            step="0.01"
+            value={quality}
+            onChange={(e) => setQuality(parseFloat(e.target.value))}
+          /><br />
 
-          <button style={{ marginTop: 15 }} onClick={resizeImage}>
-            Resize & Download
-          </button>
-
-          <button style={{ marginTop: 10 }} onClick={applyCrop}>
-            Crop & Download
-          </button>
-
-          <button style={{ marginTop: 10 }} onClick={clearCrop}>
-            Clear Crop
-          </button>
-
-          <button style={{ marginTop: 10 }} onClick={clearAll}>
-            Clear All
-          </button>
+          <button onClick={resizeImage}>Resize & Download</button><br />
+          <button onClick={applyCrop}>Crop & Download</button><br />
+          <button onClick={clearCrop}>Clear Crop</button><br />
+          <button onClick={clearAll}>Clear All</button>
         </div>
       </div>
     </div>
