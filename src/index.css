@@ -1,16 +1,145 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* REMOVE dark background, make plain white */
-body {
-  background: #ffffff !important;
+/* --- UI polish for Image Resize & Crop tool --- */
+.app-shell {
+  max-width: 1100px;
+  margin: 28px auto;
+  font-family: Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #111;
+  line-height: 1.4;
 }
 
-/* Make all text WHITE so it's always readable (optional) */
-body, html {
-  color: #000000 !important; /* BLACK TEXT (most readable) */
+/* Card container */
+.card {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  padding: 18px;
+  border: 1px solid rgba(15,23,42,0.06);
 }
 
-/* If you REALLY want white text instead of black, use this line: */
-/* color: #ffffff !important; */
+/* Page header */
+.page-title {
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  color: #0f172a;
+}
+
+/* Layout columns */
+.tool-row {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+/* Canvas column */
+.canvas-wrap {
+  flex: 1;
+  min-width: 320px;
+}
+
+/* Visual canvas area */
+.canvas-box {
+  width: 100%;
+  background: linear-gradient(180deg,#fbfdff,#f7f9fc);
+  border-radius: 10px;
+  border: 1px solid rgba(15,23,42,0.06);
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 420px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Placeholder empty canvas look */
+.canvas-box canvas {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+  background: #fafafa;
+}
+
+/* Controls column */
+.controls {
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Labels and small text */
+.label {
+  color: #0f172a;
+  font-size: 13px;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+/* Inputs */
+.controls input[type="number"],
+.controls input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(15,23,42,0.08);
+  background: #fff;
+  box-sizing: border-box;
+}
+
+/* Range */
+.controls input[type="range"] {
+  width: 100%;
+}
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  background: linear-gradient(90deg,#2563eb,#7c3aed);
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(37,99,235,0.12);
+  transition: transform .08s ease, box-shadow .08s ease;
+}
+.btn.secondary {
+  background: transparent;
+  color: #0f172a;
+  border: 1px solid rgba(15,23,42,0.08);
+  box-shadow: none;
+}
+.btn:active { transform: translateY(1px); }
+
+/* Small helper text block */
+.meta {
+  font-size: 13px;
+  color: #475569;
+  margin-top: 6px;
+}
+
+/* File info box */
+.info-box {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(15,23,42,0.03);
+  font-size: 13px;
+  color: #334155;
+}
+
+/* Responsive tweaks */
+@media (max-width: 920px) {
+  .tool-row {
+    flex-direction: column;
+  }
+  .controls {
+    width: 100%;
+  }
+  .canvas-box { min-height: 320px; }
+}
