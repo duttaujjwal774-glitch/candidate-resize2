@@ -143,3 +143,22 @@
   }
   .canvas-box { min-height: 320px; }
 }
+/* Fix alignment between canvas and right-side controls */
+.tool-row {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;   /* keep top alignment */
+}
+
+/* Add slight top spacing so controls align better with canvas */
+.controls {
+  margin-top: 26px;        /* adjust this value if needed */
+}
+
+/* Make file-info aligned on top right nicely */
+.file-info-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
